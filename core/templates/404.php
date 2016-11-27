@@ -1,4 +1,8 @@
 <?php
+/** @var $_ array */
+/** @var $l \OCP\IL10N */
+/** @var $theme OC_Theme */
+// @codeCoverageIgnoreStart
 if(!isset($_)) {//also provide standalone error page
 	require_once '../../lib/base.php';
 	
@@ -6,14 +10,16 @@ if(!isset($_)) {//also provide standalone error page
 	$tmpl->printPage();
 	exit;
 }
+// @codeCoverageIgnoreEnd
 ?>
 <?php if (isset($_['content'])): ?>
 	<?php print_unescaped($_['content']) ?>
 <?php else: ?>
 	<ul>
 		<li class="error">
-			<?php p($l->t( 'Cloud not found' )); ?><br/>
-			<p class='hint'><?php if(isset($_['file'])) p($_['file'])?></p>
+			<?php p($l->t('File not found')); ?><br>
+			<p class="hint"><?php p($l->t('The specified document has not been found on the server.')); ?></p>
+			<p class="hint"><a href="<?php p(\OC::$server->getURLGenerator()->linkTo('', 'index.php')) ?>"><?php p($l->t('You can click here to return to %s.', [$theme->getName()])); ?></a></p>
 		</li>
 	</ul>
 <?php endif; ?>

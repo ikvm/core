@@ -7,6 +7,12 @@
  */
 
 function loadDirectory($path) {
+	if (strpos($path, 'integration')) {
+		return;
+	}
+	if (strpos($path, 'Integration')) {
+		return;
+	}
 	if ($dh = opendir($path)) {
 		while ($name = readdir($dh)) {
 			if ($name[0] !== '.') {
@@ -22,7 +28,7 @@ function loadDirectory($path) {
 }
 
 function getSubclasses($parentClassName) {
-	$classes = array();
+	$classes = [];
 	foreach (get_declared_classes() as $className) {
 		if (is_subclass_of($className, $parentClassName))
 			$classes[] = $className;

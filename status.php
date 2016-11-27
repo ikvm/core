@@ -1,39 +1,55 @@
 <?php
-
 /**
-* ownCloud status page. Useful if you want to check from the outside if an ownCloud installation exists
-*
-* @author Frank Karlitschek
-* @copyright 2012 Frank Karlitschek frank@owncloud.org
-*
-* This library is free software; you can redistribute it and/or
-* modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
-* License as published by the Free Software Foundation; either
-* version 3 of the License, or any later version.
-*
-* This library is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU AFFERO GENERAL PUBLIC LICENSE for more details.
-*
-* You should have received a copy of the GNU Affero General Public
-* License along with this library.  If not, see <http://www.gnu.org/licenses/>.
-*
-*/
+ * @author Andreas Fischer <bantu@owncloud.com>
+ * @author Christopher Schäpers <kondou@ts.unde.re>
+ * @author Frank Karlitschek <frank@karlitschek.de>
+ * @author Joas Schilling <coding@schilljs.com>
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Lukas Reschke <lukas@statuscode.ch>
+ * @author Masaki Kawabata Neto <masaki.kawabata@gmail.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ *
+ * @copyright Copyright (c) 2016, ownCloud GmbH.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
+ */
 
 try {
 
-	require_once 'lib/base.php';
+	require_once __DIR__ . '/lib/base.php';
 
-	if(OC_Config::getValue('installed')==1) $installed='true'; else $installed='false';
-	$values=array(
+	$systemConfig = \OC::$server->getSystemConfig();
+
+	$installed = (bool) $systemConfig->getValue('installed', false);
+	$maintenance = (bool) $systemConfig->getValue('maintenance', false);
+	# see core/lib/private/legacy/defaults.php and core/themes/example/defaults.php
+	# for description and defaults
+	$defaults = new \OCP\Defaults();
+	$values= [
 		'installed'=>$installed,
-		'version'=>implode('.', OC_Util::getVersion()),
+		'maintenance' => $maintenance,
+		'needsDbUpgrade' => \OCP\Util::needUpgrade(),
+		'version'=>implode('.', \OCP\Util::getVersion()),
 		'versionstring'=>OC_Util::getVersionString(),
-		'edition'=>OC_Util::getEditionString());
+		'edition'=>OC_Util::getEditionString(),
+		'productname'=>$defaults->getName()];
 	if (OC::$CLI) {
 		print_r($values);
 	} else {
+		header('Access-Control-Allow-Origin: *');
+		header('Content-Type: application/json');
 		echo json_encode($values);
 	}
 

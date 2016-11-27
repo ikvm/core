@@ -163,6 +163,28 @@ describe('OCA.Trashbin.FileList tests', function() {
 
 			expect(fileList.findFileEl('One.txt.d11111')[0]).toEqual($tr[0]);
 		});
+		it('renders rows with the correct data when in root after calling setFiles with the same data set', function() {
+			// dir listing is false when in root
+			$('#dir').val('/');
+			fileList.setFiles(testFiles);
+			fileList.setFiles(fileList.files);
+			var $rows = fileList.$el.find('tbody tr');
+			var $tr = $rows.eq(0);
+			expect($rows.length).toEqual(4);
+			expect($tr.attr('data-id')).toEqual('1');
+			expect($tr.attr('data-type')).toEqual('file');
+			expect($tr.attr('data-file')).toEqual('One.txt.d11111');
+			expect($tr.attr('data-size')).not.toBeDefined();
+			expect($tr.attr('data-etag')).toEqual('abc');
+			expect($tr.attr('data-permissions')).toEqual('9'); // read and delete
+			expect($tr.attr('data-mime')).toEqual('text/plain');
+			expect($tr.attr('data-mtime')).toEqual('11111000');
+			expect($tr.find('a.name').attr('href')).toEqual('#');
+
+			expect($tr.find('.nametext').text().trim()).toEqual('One.txt');
+
+			expect(fileList.findFileEl('One.txt.d11111')[0]).toEqual($tr[0]);
+		});
 		it('renders rows with the correct data when in subdirectory', function() {
 			// dir listing is true when in a subdir
 			$('#dir').val('/subdir');
@@ -212,6 +234,26 @@ describe('OCA.Trashbin.FileList tests', function() {
 	describe('breadcrumbs', function() {
 		// TODO: test label + URL
 	});
+	describe('elementToFile', function() {
+		var $tr;
+
+		beforeEach(function() {
+			fileList.setFiles(testFiles);
+			$tr = fileList.findFileEl('One.txt.d11111');
+		});
+
+		it('converts data attributes to file info structure', function() {
+			var fileInfo = fileList.elementToFile($tr);
+			expect(fileInfo.id).toEqual(1);
+			expect(fileInfo.name).toEqual('One.txt.d11111');
+			expect(fileInfo.displayName).toEqual('One.txt');
+			expect(fileInfo.mtime).toEqual(11111000);
+			expect(fileInfo.etag).toEqual('abc');
+			expect(fileInfo.permissions).toEqual(OC.PERMISSION_READ | OC.PERMISSION_DELETE);
+			expect(fileInfo.mimetype).toEqual('text/plain');
+			expect(fileInfo.type).toEqual('file');
+		});
+	});
 	describe('Global Actions', function() {
 		beforeEach(function() {
 			fileList.setFiles(testFiles);
@@ -220,6 +262,28 @@ describe('OCA.Trashbin.FileList tests', function() {
 			fileList.findFileEl('somedir.d99999').find('input:checkbox').click();
 		});
 		describe('Delete', function() {
+			it('Shows trashbin actions', function() {
+				// visible because a few files were selected
+				expect($('.selectedActions').is(':visible')).toEqual(true);
+				expect($('.selectedActions .delete-selected').is(':visible')).toEqual(true);
+				expect($('.selectedActions .undelete').is(':visible')).toEqual(true);
+
+				// check
+				fileList.$el.find('.select-all').click();
+
+				// stays visible
+				expect($('.selectedActions').is(':visible')).toEqual(true);
+				expect($('.selectedActions .delete-selected').is(':visible')).toEqual(true);
+				expect($('.selectedActions .undelete').is(':visible')).toEqual(true);
+
+				// uncheck
+				fileList.$el.find('.select-all').click();
+
+				// becomes hidden now
+				expect($('.selectedActions').is(':visible')).toEqual(false);
+				expect($('.selectedActions .delete-selected').is(':visible')).toEqual(false);
+				expect($('.selectedActions .undelete').is(':visible')).toEqual(false);
+			});
 			it('Deletes selected files when "Delete" clicked', function() {
 				var request;
 				$('.selectedActions .delete-selected').click();

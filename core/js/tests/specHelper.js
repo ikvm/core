@@ -35,6 +35,24 @@ window.dayNames = [
 	'Friday',
 	'Saturday'
 ];
+window.dayNamesShort = [
+	'Sun.',
+	'Mon.',
+	'Tue.',
+	'Wed.',
+	'Thu.',
+	'Fri.',
+	'Sat.'
+];
+window.dayNamesMin = [
+	'Su',
+	'Mo',
+	'Tu',
+	'We',
+	'Th',
+	'Fr',
+	'Sa'
+];
 window.monthNames = [
 	'January',
 	'February',
@@ -49,11 +67,27 @@ window.monthNames = [
 	'November',
 	'December'
 ];
+window.monthNamesShort = [
+	'Jan.',
+	'Feb.',
+	'Mar.',
+	'Apr.',
+	'May.',
+	'Jun.',
+	'Jul.',
+	'Aug.',
+	'Sep.',
+	'Oct.',
+	'Nov.',
+	'Dec.'
+];
 window.firstDay = 0;
 
 // setup dummy webroots
 /* jshint camelcase: false */
 window.oc_debug = true;
+window.oc_isadmin = false;
+// FIXME: oc_webroot is supposed to be only the path!!!
 window.oc_webroot = location.href + '/';
 window.oc_appswebroots = {
 	"files": window.oc_webroot + '/apps/files/'
@@ -77,10 +111,33 @@ window.Snap.prototype = {
 	close: function() {}
 };
 
+window.isPhantom = /phantom/i.test(navigator.userAgent);
+
 // global setup for all tests
 (function setupTests() {
 	var fakeServer = null,
-		$testArea = null;
+		$testArea = null,
+		ajaxErrorStub = null;
+
+	/**
+	 * Utility functions for testing
+	 */
+	var TestUtil = {
+		/**
+		 * Returns the image URL set on the given element
+		 * @param $el element
+		 * @return {String} image URL
+		 */
+		getImageUrl: function($el) {
+			// might be slightly different cross-browser
+			var url = $el.css('background-image');
+			var r = url.match(/url\(['"]?([^'")]*)['"]?\)/);
+			if (!r) {
+				return url;
+			}
+			return r[1];
+		}
+	};
 
 	beforeEach(function() {
 		// test area for elements that need absolute selector access or measure widths/heights
@@ -91,18 +148,23 @@ window.Snap.prototype = {
 		// must use fake responses for expected calls
 		fakeServer = sinon.fakeServer.create();
 
-		// return fake translations as they might be requested for many test runs
-		fakeServer.respondWith(/\/index.php\/core\/ajax\/translations.php$/, [
-				200, {
-					"Content-Type": "application/json"
-				},
-				'{"data": [], "plural_form": "nplurals=2; plural=(n != 1);"}'
-			]
-		);
-
 		// make it globally available, so that other tests can define
 		// custom responses
 		window.fakeServer = fakeServer;
+
+		if (!OC.TestUtil) {
+			OC.TestUtil = TestUtil;
+		}
+
+		moment.locale('en');
+
+		// reset plugins
+		OC.Plugins._plugins = [];
+
+		// dummy select2 (which isn't loaded during the tests)
+		$.fn.select2 = function() { return this; };
+
+		ajaxErrorStub = sinon.stub(OC, '_processAjaxError');
 	});
 
 	afterEach(function() {
@@ -111,6 +173,10 @@ window.Snap.prototype = {
 		fakeServer.restore();
 
 		$testArea.remove();
+
+		delete($.fn.select2);
+
+		ajaxErrorStub.restore();
 	});
 })();
 

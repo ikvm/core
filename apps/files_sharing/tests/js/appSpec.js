@@ -57,6 +57,16 @@ describe('OCA.Sharing.App tests', function() {
 		});
 	});
 	describe('file actions', function() {
+		var oldLegacyFileActions;
+
+		beforeEach(function() {
+			oldLegacyFileActions = window.FileActions;
+			window.FileActions = new OCA.Files.FileActions();
+		});
+
+		afterEach(function() {
+			window.FileActions = oldLegacyFileActions;
+		});
 		it('provides default file actions', function() {
 			_.each([fileListIn, fileListOut], function(fileList) {
 				var fileActions = fileList.fileActions;
@@ -122,7 +132,7 @@ describe('OCA.Sharing.App tests', function() {
 				shareOwner: 'user2'
 			}]);
 
-			fileListIn.findFileEl('testdir').find('td a.name').click();
+			fileListIn.findFileEl('testdir').find('td .nametext').click();
 
 			expect(OCA.Files.App.fileList.getCurrentDirectory()).toEqual('/somewhere/inside/subdir/testdir');
 

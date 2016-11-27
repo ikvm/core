@@ -1,12 +1,15 @@
-<?php /** @var $l OC_L10N */ ?>
-<div id="controls">
-	<div id="file_action_panel"></div>
-</div>
+<?php /** @var $l \OCP\IL10N */ ?>
 <div id='notification'></div>
 
 <div id="emptycontent" class="hidden"></div>
 
 <input type="hidden" name="dir" value="" id="dir">
+
+<div class="nofilterresults hidden">
+	<div class="icon-search"></div>
+	<h2><?php p($l->t('No entries found in this folder')); ?></h2>
+	<p></p>
+</div>
 
 <table id="filestable">
 	<thead>
@@ -18,6 +21,9 @@
 			</th>
 			<th id="headerDate" class="hidden column-mtime">
 				<a id="modified" class="columntitle" data-sort="mtime"><span><?php p($l->t( 'Share time' )); ?></span><span class="sort-indicator"></span></a>
+			</th>
+			<th class="hidden column-expiration">
+				<a class="columntitle"><span><?php p($l->t( 'Expiration date' )); ?></span></a>
 			</th>
 		</tr>
 	</thead>

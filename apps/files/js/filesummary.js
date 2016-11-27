@@ -19,61 +19,123 @@
 *
 */
 
-/* global OC, n, t */
-
 (function() {
+	var INFO_TEMPLATE =
+		'<span class="info">' +
+			'<span class="dirinfo"></span>' +
+			'<span class="connector">{{connectorLabel}}</span>' +
+			'<span class="fileinfo"></span>' +
+			'<span class="hiddeninfo"></span>' +
+			'<span class="filter"></span>' +
+		'</span>';
+
 	/**
 	 * The FileSummary class encapsulates the file summary values and
 	 * the logic to render it in the given container
+	 *
+	 * @constructs FileSummary
+	 * @memberof OCA.Files
+	 *
 	 * @param $tr table row element
-	 * $param summary optional initial summary value
+	 * @param {OC.Backbone.Model} [options.filesConfig] files app configuration
 	 */
-	var FileSummary = function($tr) {
+	var FileSummary = function($tr, options) {
+		options = options || {};
+		var self = this;
 		this.$el = $tr;
+		var filesConfig = options.config;
+		if (filesConfig) {
+			this._showHidden = !!filesConfig.get('showhidden');
+			filesConfig.on('change:showhidden', function() {
+				self._showHidden = !!this.get('showhidden');
+				self.update();
+			});
+		}
 		this.clear();
 		this.render();
 	};
 
 	FileSummary.prototype = {
+		_showHidden: null,
+
 		summary: {
 			totalFiles: 0,
 			totalDirs: 0,
-			totalSize: 0
+			totalHidden: 0,
+			totalSize: 0,
+			filter:'',
+			sumIsPending:false
+		},
+
+		/**
+		 * Returns whether the given file info must be hidden
+		 *
+		 * @param {OC.Files.FileInfo} fileInfo file info
+		 * 
+		 * @return {boolean} true if the file is a hidden file, false otherwise
+		 */
+		_isHiddenFile: function(file) {
+			return file.name && file.name.charAt(0) === '.';
 		},
 
 		/**
 		 * Adds file
-		 * @param file file to add
-		 * @param update whether to update the display
+		 * @param {OC.Files.FileInfo} file file to add
+		 * @param {boolean} update whether to update the display
 		 */
 		add: function(file, update) {
+			if (file.name && file.name.toLowerCase().indexOf(this.summary.filter) === -1) {
+				return;
+			}
 			if (file.type === 'dir' || file.mime === 'httpd/unix-directory') {
 				this.summary.totalDirs++;
 			}
 			else {
 				this.summary.totalFiles++;
 			}
-			this.summary.totalSize += parseInt(file.size, 10) || 0;
+			if (this._isHiddenFile(file)) {
+				this.summary.totalHidden++;
+			}
+
+			var size = parseInt(file.size, 10) || 0;
+			if (size >=0) {
+				this.summary.totalSize += size;
+			} else {
+				this.summary.sumIsPending = true;
+			}
 			if (!!update) {
 				this.update();
 			}
 		},
 		/**
 		 * Removes file
-		 * @param file file to remove
-		 * @param update whether to update the display
+		 * @param {OC.Files.FileInfo} file file to remove
+		 * @param {boolean} update whether to update the display
 		 */
 		remove: function(file, update) {
+			if (file.name && file.name.toLowerCase().indexOf(this.summary.filter) === -1) {
+				return;
+			}
 			if (file.type === 'dir' || file.mime === 'httpd/unix-directory') {
 				this.summary.totalDirs--;
 			}
 			else {
 				this.summary.totalFiles--;
 			}
-			this.summary.totalSize -= parseInt(file.size, 10) || 0;
+			if (this._isHiddenFile(file)) {
+				this.summary.totalHidden--;
+			}
+			var size = parseInt(file.size, 10) || 0;
+			if (size >=0) {
+				this.summary.totalSize -= size;
+			}
 			if (!!update) {
 				this.update();
 			}
+		},
+		setFilter: function(filter, files){
+			this.summary.filter = filter.toLowerCase();
+			this.calculate(files);
 		},
 		/**
 		 * Returns the total of files and directories
@@ -90,18 +152,32 @@
 			var summary = {
 				totalDirs: 0,
 				totalFiles: 0,
-				totalSize: 0
+				totalHidden: 0,
+				totalSize: 0,
+				filter: this.summary.filter,
+				sumIsPending: false
 			};
 
 			for (var i = 0; i < files.length; i++) {
 				file = files[i];
+				if (file.name && file.name.toLowerCase().indexOf(this.summary.filter) === -1) {
+					continue;
+				}
 				if (file.type === 'dir' || file.mime === 'httpd/unix-directory') {
 					summary.totalDirs++;
 				}
 				else {
 					summary.totalFiles++;
 				}
-				summary.totalSize += parseInt(file.size, 10) || 0;
+				if (this._isHiddenFile(file)) {
+					summary.totalHidden++;
+				}
+				var size = parseInt(file.size, 10) || 0;
+				if (size >=0) {
+					summary.totalSize += size;
+				} else {
+					summary.sumIsPending = true;
+				}
 			}
 			this.setSummary(summary);
 		},
@@ -117,7 +193,19 @@
 		 */
 		setSummary: function(summary) {
 			this.summary = summary;
+			if (typeof this.summary.filter === 'undefined') {
+				this.summary.filter = '';
+			}
 			this.update();
+		},
+
+		_infoTemplate: function(data) {
+			if (!this._infoTemplateCompiled) {
+				this._infoTemplateCompiled = Handlebars.compile(INFO_TEMPLATE);
+			}
+			return this._infoTemplateCompiled(_.extend({
+				connectorLabel: t('files', '{dirs} and {files}', {dirs: '', files: ''})
+			}, data));
 		},
 
 		/**
@@ -136,11 +224,15 @@
 			var $dirInfo = this.$el.find('.dirinfo');
 			var $fileInfo = this.$el.find('.fileinfo');
 			var $connector = this.$el.find('.connector');
+			var $filterInfo = this.$el.find('.filter');
+			var $hiddenInfo = this.$el.find('.hiddeninfo');
 
 			// Substitute old content with new translations
 			$dirInfo.html(n('files', '%n folder', '%n folders', this.summary.totalDirs));
 			$fileInfo.html(n('files', '%n file', '%n files', this.summary.totalFiles));
-			this.$el.find('.filesize').html(OC.Util.humanFileSize(this.summary.totalSize));
+			$hiddenInfo.html(' (' + n('files', 'including %n hidden', 'including %n hidden', this.summary.totalHidden) + ')');
+			var fileSize = this.summary.sumIsPending ? t('files', 'Pending') : OC.Util.humanFileSize(this.summary.totalSize);
+			this.$el.find('.filesize').html(fileSize);
 
 			// Show only what's necessary (may be hidden)
 			if (this.summary.totalDirs === 0) {
@@ -158,36 +250,36 @@
 			if (this.summary.totalDirs > 0 && this.summary.totalFiles > 0) {
 				$connector.removeClass('hidden');
 			}
+			$hiddenInfo.toggleClass('hidden', this.summary.totalHidden === 0 || this._showHidden)
+			if (this.summary.filter === '') {
+				$filterInfo.html('');
+				$filterInfo.addClass('hidden');
+			} else {
+				$filterInfo.html(' ' + n('files', 'matches \'{filter}\'', 'match \'{filter}\'', this.summary.totalDirs + this.summary.totalFiles, {filter: this.summary.filter}));
+				$filterInfo.removeClass('hidden');
+			}
 		},
 		render: function() {
 			if (!this.$el) {
 				return;
 			}
-			// TODO: ideally this should be separate to a template or something
 			var summary = this.summary;
-			var directoryInfo = n('files', '%n folder', '%n folders', summary.totalDirs);
-			var fileInfo = n('files', '%n file', '%n files', summary.totalFiles);
-
-			var infoVars = {
-				dirs: '<span class="dirinfo">'+directoryInfo+'</span><span class="connector">',
-				files: '</span><span class="fileinfo">'+fileInfo+'</span>'
-			};
 
 			// don't show the filesize column, if filesize is NaN (e.g. in trashbin)
 			var fileSize = '';
 			if (!isNaN(summary.totalSize)) {
-				fileSize = '<td class="filesize">' + OC.Util.humanFileSize(summary.totalSize) + '</td>';
+				fileSize = summary.sumIsPending ? t('files', 'Pending') : OC.Util.humanFileSize(summary.totalSize);
+				fileSize = '<td class="filesize">' + fileSize + '</td>';
 			}
 
-			var info = t('files', '{dirs} and {files}', infoVars);
-
-			var $summary = $('<td><span class="info">'+info+'</span></td>'+fileSize+'<td class="date"></td>');
-
-			if (!this.summary.totalFiles && !this.summary.totalDirs) {
-				this.$el.addClass('hidden');
-			}
-
+			var $summary = $(
+				'<td>' + this._infoTemplate() + '</td>' +
+				fileSize +
+				'<td class="date"></td>'
+			);
+			this.$el.addClass('hidden');
 			this.$el.append($summary);
+			this.update();
 		}
 	};
 	OCA.Files.FileSummary = FileSummary;

@@ -18,63 +18,537 @@
  *    - TODO music upload button
  */
 
-/* global Files, FileList, jQuery, oc_requesttoken, humanFileSize, getUniqueName */
+/* global jQuery, humanFileSize, md5 */
 
 /**
- * Function that will allow us to know if Ajax uploads are supported
- * @link https://github.com/New-Bamboo/example-ajax-upload/blob/master/public/index.html
- * also see article @link http://blog.new-bamboo.co.uk/2012/01/10/ridiculously-simple-ajax-uploads-with-formdata
+ * File upload object
+ *
+ * @class OC.FileUpload
+ * @classdesc
+ *
+ * Represents a file upload
+ *
+ * @param {OC.Uploader} uploader uploader
+ * @param {Object} data blueimp data
  */
-function supportAjaxUploadWithProgress() {
-	return supportFileAPI() && supportAjaxUploadProgressEvents() && supportFormData();
-
-	// Is the File API supported?
-	function supportFileAPI() {
-		var fi = document.createElement('INPUT');
-		fi.type = 'file';
-		return 'files' in fi;
+OC.FileUpload = function(uploader, data) {
+	this.uploader = uploader;
+	this.data = data;
+	var path = '';
+	if (this.uploader.fileList) {
+		path = OC.joinPaths(this.uploader.fileList.getCurrentDirectory(), this.getFile().name);
+	} else {
+		path = this.getFile().name;
 	}
+	this.id = 'web-file-upload-' + md5(path) + '-' + (new Date()).getTime();
+};
+OC.FileUpload.CONFLICT_MODE_DETECT = 0;
+OC.FileUpload.CONFLICT_MODE_OVERWRITE = 1;
+OC.FileUpload.CONFLICT_MODE_AUTORENAME = 2;
+OC.FileUpload.prototype = {
 
-	// Are progress events supported?
-	function supportAjaxUploadProgressEvents() {
-		var xhr = new XMLHttpRequest();
-		return !! (xhr && ('upload' in xhr) && ('onprogress' in xhr.upload));
-	}
+	/**
+	 * Unique upload id
+	 *
+	 * @type string
+	 */
+	id: null,
 
-	// Is FormData supported?
-	function supportFormData() {
-		return !! window.FormData;
+	/**
+	 * Upload element
+	 *
+	 * @type Object
+	 */
+	$uploadEl: null,
+
+	/**
+	 * Target folder
+	 *
+	 * @type string
+	 */
+	_targetFolder: '',
+
+	/**
+	 * @type int
+	 */
+	_conflictMode: OC.FileUpload.CONFLICT_MODE_DETECT,
+
+	/**
+	 * New name from server after autorename
+	 *
+	 * @type String
+	 */
+	_newName: null,
+
+	/**
+	 * Returns the unique upload id
+	 *
+	 * @return string
+	 */
+	getId: function() {
+		return this.id;
+	},
+
+	/**
+	 * Returns the file to be uploaded
+	 *
+	 * @return {File} file
+	 */
+	getFile: function() {
+		return this.data.files[0];
+	},
+
+	/**
+	 * Return the final filename.
+	 *
+	 * @return {String} file name
+	 */
+	getFileName: function() {
+		// autorenamed name
+		if (this._newName) {
+			return this._newName;
+		}
+		return this.getFile().name;
+	},
+
+	setTargetFolder: function(targetFolder) {
+		this._targetFolder = targetFolder;
+	},
+
+	getTargetFolder: function() {
+		return this._targetFolder;
+	},
+
+	/**
+	 * Get full path for the target file, including relative path,
+	 * without the file name.
+	 *
+	 * @return {String} full path
+	 */
+	getFullPath: function() {
+		return OC.joinPaths(this._targetFolder, this.getFile().relativePath || '');
+	},
+
+	/**
+	 * Returns conflict resolution mode.
+	 *
+	 * @return {int} conflict mode
+	 */
+	getConflictMode: function() {
+		return this._conflictMode || OC.FileUpload.CONFLICT_MODE_DETECT;
+	},
+
+	/**
+	 * Set conflict resolution mode.
+	 * See CONFLICT_MODE_* constants.
+	 *
+	 * @param {int} mode conflict mode
+	 */
+	setConflictMode: function(mode) {
+		this._conflictMode = mode;
+	},
+
+	/**
+	 * Returns whether the upload is in progress
+	 *
+	 * @return {bool}
+	 */
+	isPending: function() {
+		return this.data.state() === 'pending';
+	},
+
+	deleteUpload: function() {
+		delete this.data.jqXHR;
+	},
+
+	/**
+	 * Trigger autorename and append "(2)".
+	 * Multiple calls will increment the appended number.
+	 */
+	autoRename: function() {
+		var name = this.getFile().name;
+		if (!this._renameAttempt) {
+			this._renameAttempt = 1;
+		}
+
+		var dotPos = name.lastIndexOf('.');
+		var extPart = '';
+		if (dotPos > 0) {
+			this._newName = name.substr(0, dotPos);
+			extPart = name.substr(dotPos);
+		} else {
+			this._newName = name;
+		}
+
+		// generate new name
+		this._renameAttempt++;
+		this._newName = this._newName + ' (' + this._renameAttempt + ')' + extPart;
+	},
+
+	/**
+	 * Submit the upload
+	 */
+	submit: function() {
+		var self = this;
+		var data = this.data;
+		var file = this.getFile();
+
+		// it was a folder upload, so make sure the parent directory exists alrady
+		var folderPromise;
+		if (file.relativePath) {
+			folderPromise = this.uploader.ensureFolderExists(this.getFullPath());
+		} else {
+			folderPromise = $.Deferred().resolve().promise();
+		}
+
+		if (this.uploader.fileList) {
+			this.data.url = this.uploader.fileList.getUploadUrl(this.getFileName(), this.getFullPath());
+		}
+
+		if (!this.data.headers) {
+			this.data.headers = {};
+		}
+
+		// webdav without multipart
+		this.data.multipart = false;
+		this.data.type = 'PUT';
+
+		delete this.data.headers['If-None-Match'];
+		if (this._conflictMode === OC.FileUpload.CONFLICT_MODE_DETECT
+			|| this._conflictMode === OC.FileUpload.CONFLICT_MODE_AUTORENAME) {
+			this.data.headers['If-None-Match'] = '*';
+		}
+
+		if (file.lastModified) {
+			// preserve timestamp
+			this.data.headers['X-OC-Mtime'] = file.lastModified / 1000;
+		}
+
+		var userName = this.uploader.filesClient.getUserName();
+		var password = this.uploader.filesClient.getPassword();
+		if (userName) {
+			// copy username/password from DAV client
+			this.data.headers['Authorization'] =
+				'Basic ' + btoa(userName + ':' + (password || ''));
+		}
+
+		var chunkFolderPromise;
+		if ($.support.blobSlice
+			&& this.uploader.fileUploadParam.maxChunkSize
+			&& this.getFile().size > this.uploader.fileUploadParam.maxChunkSize
+		) {
+			data.isChunked = true;
+			chunkFolderPromise = this.uploader.filesClient.createDirectory(
+				'uploads/' + encodeURIComponent(OC.getCurrentUser().uid) + '/' + encodeURIComponent(this.getId())
+			);
+			// TODO: if fails, it means same id already existed, need to retry
+		} else {
+			chunkFolderPromise = $.Deferred().resolve().promise();
+		}
+
+		// wait for creation of the required directory before uploading
+		$.when(folderPromise, chunkFolderPromise).then(function() {
+			data.submit();
+		}, function() {
+			self.abort();
+		});
+
+	},
+
+	/**
+	 * Process end of transfer
+	 */
+	done: function() {
+		if (!this.data.isChunked) {
+			return $.Deferred().resolve().promise();
+		}
+
+		var uid = OC.getCurrentUser().uid;
+		return this.uploader.filesClient.move(
+			'uploads/' + encodeURIComponent(uid) + '/' + encodeURIComponent(this.getId()) + '/.file',
+			'files/' + encodeURIComponent(uid) + '/' + OC.joinPaths(this.getFullPath(), this.getFileName())
+		);
+	},
+
+	/**
+	 * Abort the upload
+	 */
+	abort: function() {
+		if (this.data.isChunked) {
+			// delete transfer directory for this upload
+			this.uploader.filesClient.remove(
+				'uploads/' + encodeURIComponent(OC.getCurrentUser().uid) + '/' + encodeURIComponent(this.getId())
+			);
+		}
+		this.data.abort();
+	},
+
+	/**
+	 * Returns the server response
+	 *
+	 * @return {Object} response
+	 */
+	getResponse: function() {
+		var response = this.data.response();
+		if (typeof response.result !== 'string') {
+			//fetch response from iframe
+			response = $.parseJSON(response.result[0].body.innerText);
+			if (!response) {
+				// likely due to internal server error
+				response = {status: 500};
+			}
+		} else {
+			response = response.result;
+		}
+		return response;
+	},
+
+	/**
+	 * Returns the status code from the response
+	 *
+	 * @return {int} status code
+	 */
+	getResponseStatus: function() {
+		if (this.uploader.isXHRUpload()) {
+			var xhr = this.data.response().jqXHR;
+			if (xhr) {
+				return xhr.status;
+			}
+			return null;
+		}
+		return this.getResponse().status;
+	},
+
+	/**
+	 * Returns the response header by name
+	 *
+	 * @param {String} headerName header name
+	 * @return {Array|String} response header value(s)
+	 */
+	getResponseHeader: function(headerName) {
+		headerName = headerName.toLowerCase();
+		if (this.uploader.isXHRUpload()) {
+			return this.data.response().jqXHR.getResponseHeader(headerName);
+		}
+
+		var headers = this.getResponse().headers;
+		if (!headers) {
+			return null;
+		}
+
+		var value =  _.find(headers, function(value, key) {
+			return key.toLowerCase() === headerName;
+		});
+		if (_.isArray(value) && value.length === 1) {
+			return value[0];
+		}
+		return value;
 	}
-}
+};
 
 /**
  * keeps track of uploads in progress and implements callbacks for the conflicts dialog
- * @type {OC.Upload}
+ * @namespace
  */
-OC.Upload = {
-	_uploads: [],
+
+OC.Uploader = function() {
+	this.init.apply(this, arguments);
+};
+
+OC.Uploader.prototype = _.extend({
 	/**
-	 * deletes the jqHXR object from a data selection
-	 * @param {object} data
+	 * @type Array<OC.FileUpload>
 	 */
-	deleteUpload:function(data) {
-		delete data.jqXHR;
+	_uploads: {},
+
+	/**
+	 * List of directories known to exist.
+	 *
+	 * Key is the fullpath and value is boolean, true meaning that the directory
+	 * was already created so no need to create it again.
+	 */
+	_knownDirs: {},
+
+	/**
+	 * @type OCA.Files.FileList
+	 */
+	fileList: null,
+
+	/**
+	 * @type OC.Files.Client
+	 */
+	filesClient: null,
+
+	/**
+	 * Function that will allow us to know if Ajax uploads are supported
+	 * @link https://github.com/New-Bamboo/example-ajax-upload/blob/master/public/index.html
+	 * also see article @link http://blog.new-bamboo.co.uk/2012/01/10/ridiculously-simple-ajax-uploads-with-formdata
+	 */
+	_supportAjaxUploadWithProgress: function() {
+		if (window.TESTING) {
+			return true;
+		}
+		return supportFileAPI() && supportAjaxUploadProgressEvents() && supportFormData();
+
+		// Is the File API supported?
+		function supportFileAPI() {
+			var fi = document.createElement('INPUT');
+			fi.type = 'file';
+			return 'files' in fi;
+		}
+
+		// Are progress events supported?
+		function supportAjaxUploadProgressEvents() {
+			var xhr = new XMLHttpRequest();
+			return !! (xhr && ('upload' in xhr) && ('onprogress' in xhr.upload));
+		}
+
+		// Is FormData supported?
+		function supportFormData() {
+			return !! window.FormData;
+		}
+	},
+
+	/**
+	 * Returns whether an XHR upload will be used
+	 *
+	 * @return {bool} true if XHR upload will be used,
+	 * false for iframe upload
+	 */
+	isXHRUpload: function () {
+		return !this.fileUploadParam.forceIframeTransport &&
+			((!this.fileUploadParam.multipart && $.support.xhrFileUpload) ||
+			$.support.xhrFormDataFileUpload);
+	},
+
+	/**
+	 * Makes sure that the upload folder and its parents exists
+	 *
+	 * @param {String} fullPath full path
+	 * @return {Promise} promise that resolves when all parent folders
+	 * were created
+	 */
+	ensureFolderExists: function(fullPath) {
+		if (!fullPath || fullPath === '/') {
+			return $.Deferred().resolve().promise();
+		}
+
+		// remove trailing slash
+		if (fullPath.charAt(fullPath.length - 1) === '/') {
+			fullPath = fullPath.substr(0, fullPath.length - 1);
+		}
+
+		var self = this;
+		var promise = this._knownDirs[fullPath];
+
+		if (this.fileList) {
+			// assume the current folder exists
+			this._knownDirs[this.fileList.getCurrentDirectory()] = $.Deferred().resolve().promise();
+		}
+
+		if (!promise) {
+			var deferred = new $.Deferred();
+			promise = deferred.promise();
+			this._knownDirs[fullPath] = promise;
+
+			// make sure all parents already exist
+			var parentPath = OC.dirname(fullPath);
+			var parentPromise = this._knownDirs[parentPath];
+			if (!parentPromise) {
+				parentPromise = this.ensureFolderExists(parentPath);
+			}
+
+			parentPromise.then(function() {
+				self.filesClient.createDirectory(fullPath).always(function(status) {
+					// 405 is expected if the folder already exists
+					if ((status >= 200 && status < 300) || status === 405) {
+						self.trigger('createdfolder', fullPath);
+						deferred.resolve();
+						return;
+					}
+					OC.Notification.showTemporary(t('files', 'Could not create folder "{dir}"', {dir: fullPath}));
+					deferred.reject();
+				});
+			}, function() {
+				deferred.reject();
+			});
+		}
+
+		return promise;
+	},
+
+	/**
+	 * Submit the given uploads
+	 *
+	 * @param {Array} array of uploads to start
+	 */
+	submitUploads: function(uploads) {
+		var self = this;
+		_.each(uploads, function(upload) {
+			self._uploads[upload.data.uploadId] = upload;
+			upload.submit();
+		});
+	},
+
+	/**
+	 * Show conflict for the given file object
+	 *
+	 * @param {OC.FileUpload} file upload object
+	 */
+	showConflict: function(fileUpload) {
+		//show "file already exists" dialog
+		var self = this;
+		var file = fileUpload.getFile();
+		// already attempted autorename but the server said the file exists ? (concurrently added)
+		if (fileUpload.getConflictMode() === OC.FileUpload.CONFLICT_MODE_AUTORENAME) {
+			// attempt another autorename, defer to let the current callback finish
+			_.defer(function() {
+				self.onAutorename(fileUpload);
+			});
+			return;
+		}
+		// retrieve more info about this file
+		this.filesClient.getFileInfo(fileUpload.getFullPath()).then(function(status, fileInfo) {
+			var original = fileInfo;
+			var replacement = file;
+			OC.dialogs.fileexists(fileUpload, original, replacement, self);
+		});
 	},
 	/**
 	 * cancels all uploads
 	 */
 	cancelUploads:function() {
 		this.log('canceling uploads');
-		jQuery.each(this._uploads, function(i, jqXHR) {
-			jqXHR.abort();
+		jQuery.each(this._uploads, function(i, upload) {
+			upload.abort();
 		});
-		this._uploads = [];
+		this.clear();
 	},
-	rememberUpload:function(jqXHR) {
-		if (jqXHR) {
-			this._uploads.push(jqXHR);
+	/**
+	 * Clear uploads
+	 */
+	clear: function() {
+		this._uploads = {};
+		this._knownDirs = {};
+	},
+	/**
+	 * Returns an upload by id
+	 *
+	 * @param {int} data uploadId
+	 * @return {OC.FileUpload} file upload
+	 */
+	getUpload: function(data) {
+		if (_.isString(data)) {
+			return this._uploads[data];
+		} else if (data.uploadId) {
+			return this._uploads[data.uploadId];
 		}
+		return null;
 	},
+
+	showUploadCancelMessage: _.debounce(function() {
+		OC.Notification.showTemporary(t('files', 'Upload cancelled.'), {timeout: 10});
+	}, 500),
 	/**
 	 * Checks the currently known uploads.
 	 * returns true if any hxr has the state 'pending'
@@ -83,8 +557,8 @@ OC.Upload = {
 	isProcessing:function() {
 		var count = 0;
 
-		jQuery.each(this._uploads, function(i, data) {
-			if (data.state() === 'pending') {
+		jQuery.each(this._uploads, function(i, upload) {
+			if (upload.isPending()) {
 				count++;
 			}
 		});
@@ -92,9 +566,8 @@ OC.Upload = {
 	},
 	/**
 	 * callback for the conflicts dialog
-	 * @param {object} data
 	 */
-	onCancel:function(data) {
+	onCancel:function() {
 		this.cancelUploads();
 	},
 	/**
@@ -124,37 +597,36 @@ OC.Upload = {
 	},
 	/**
 	 * handle skipping an upload
-	 * @param {object} data
+	 * @param {OC.FileUpload} upload
 	 */
-	onSkip:function(data) {
-		this.log('skip', null, data);
-		this.deleteUpload(data);
+	onSkip:function(upload) {
+		this.log('skip', null, upload);
+		upload.deleteUpload();
 	},
 	/**
 	 * handle replacing a file on the server with an uploaded file
-	 * @param {object} data
+	 * @param {FileUpload} data
 	 */
-	onReplace:function(data) {
-		this.log('replace', null, data);
-		if (data.data) {
-			data.data.append('resolution', 'replace');
-		} else {
-			data.formData.push({name:'resolution', value:'replace'}); //hack for ie8
-		}
-		data.submit();
+	onReplace:function(upload) {
+		this.log('replace', null, upload);
+		upload.setConflictMode(OC.FileUpload.CONFLICT_MODE_OVERWRITE);
+		this.submitUploads([upload]);
 	},
 	/**
 	 * handle uploading a file and letting the server decide a new name
-	 * @param {object} data
+	 * @param {object} upload
 	 */
-	onAutorename:function(data) {
-		this.log('autorename', null, data);
-		if (data.data) {
-			data.data.append('resolution', 'autorename');
-		} else {
-			data.formData.push({name:'resolution', value:'autorename'}); //hack for ie8
-		}
-		data.submit();
+	onAutorename:function(upload) {
+		this.log('autorename', null, upload);
+		upload.setConflictMode(OC.FileUpload.CONFLICT_MODE_AUTORENAME);
+
+		do {
+			upload.autoRename();
+			// if file known to exist on the client side, retry
+		} while (this.fileList && this.fileList.inList(upload.getFileName()));
+
+		// resubmit upload
+		this.submitUploads([upload]);
 	},
 	_trace:false, //TODO implement log handler for JS per class?
 	log:function(caption, e, data) {
@@ -164,8 +636,9 @@ OC.Upload = {
 		}
 	},
 	/**
-	 * TODO checks the list of existing files prior to uploading and shows a simple dialog to choose
+	 * checks the list of existing files prior to uploading and shows a simple dialog to choose
 	 * skip all, replace all or choose which files to keep
+	 *
 	 * @param {array} selection of files to upload
 	 * @param {object} callbacks - object with several callback methods
 	 * @param {function} callbacks.onNoConflicts
@@ -175,26 +648,107 @@ OC.Upload = {
 	 * @param {function} callbacks.onCancel
 	 */
 	checkExistingFiles: function (selection, callbacks) {
-		// TODO check filelist before uploading and show dialog on conflicts, use callbacks
+		var fileList = this.fileList;
+		var conflicts = [];
+		// only keep non-conflicting uploads
+		selection.uploads = _.filter(selection.uploads, function(upload) {
+			var file = upload.getFile();
+			if (file.relativePath) {
+				// can't check in subfolder contents
+				return true;
+			}
+			if (!fileList) {
+				// no list to check against
+				return true;
+			}
+			var fileInfo = fileList.findFile(file.name);
+			if (fileInfo) {
+				conflicts.push([
+					// original
+					_.extend(fileInfo, {
+						directory: fileInfo.directory || fileInfo.path || fileList.getCurrentDirectory()
+					}),
+					// replacement (File object)
+					upload
+				]);
+				return false;
+			}
+			return true;
+		});
+		if (conflicts.length) {
+			// wait for template loading
+			OC.dialogs.fileexists(null, null, null, this).done(function() {
+				_.each(conflicts, function(conflictData) {
+					OC.dialogs.fileexists(conflictData[1], conflictData[0], conflictData[1].getFile(), this);
+				});
+			});
+		}
+
+		// upload non-conflicting files
+		// note: when reaching the server they might still meet conflicts
+		// if the folder was concurrently modified, these will get added
+		// to the already visible dialog, if applicable
 		callbacks.onNoConflicts(selection);
 	},
 
 	_hideProgressBar: function() {
-		$('#uploadprogresswrapper input.stop').fadeOut();
+		var self = this;
+		$('#uploadprogresswrapper .stop').fadeOut();
 		$('#uploadprogressbar').fadeOut(function() {
-			$('#file_upload_start').trigger(new $.Event('resized'));
+			self.$uploadEl.trigger(new $.Event('resized'));
 		});
 	},
 
 	_showProgressBar: function() {
 		$('#uploadprogressbar').fadeIn();
-		$('#file_upload_start').trigger(new $.Event('resized'));
+		this.$uploadEl.trigger(new $.Event('resized'));
 	},
 
-	init: function() {
-		if ( $('#file_upload_start').exists() ) {
-			var file_upload_param = {
-				dropZone: $('#content'), // restrict dropZone to content div
+	/**
+	 * Returns whether the given file is known to be a received shared file
+	 *
+	 * @param {Object} file file
+	 * @return {bool} true if the file is a shared file
+	 */
+	_isReceivedSharedFile: function(file) {
+		if (!window.FileList) {
+			return false;
+		}
+		var $tr = window.FileList.findFileEl(file.name);
+		if (!$tr.length) {
+			return false;
+		}
+
+		return ($tr.attr('data-mounttype') === 'shared-root' && $tr.attr('data-mime') !== 'httpd/unix-directory');
+	},
+
+	/**
+	 * Initialize the upload object
+	 *
+	 * @param {Object} $uploadEl upload element
+	 * @param {Object} options
+	 * @param {OCA.Files.FileList} [options.fileList] file list object
+	 * @param {OC.Files.Client} [options.filesClient] files client object
+	 * @param {Object} [options.dropZone] drop zone for drag and drop upload
+	 */
+	init: function($uploadEl, options) {
+		var self = this;
+		options = options || {};
+
+		this.fileList = options.fileList;
+		this.filesClient = options.filesClient || OC.Files.getClient();
+
+		$uploadEl = $($uploadEl);
+		this.$uploadEl = $uploadEl;
+
+		if ($uploadEl.exists()) {
+			$('#uploadprogresswrapper .stop').on('click', function() {
+				self.cancelUploads();
+			});
+
+			this.fileUploadParam = {
+				type: 'PUT',
+				dropZone: options.dropZone, // restrict dropZone to content div
 				autoUpload: false,
 				sequentialUploads: true,
 				//singleFileUploads is on by default, so the data.files array will always have length 1
@@ -215,8 +769,12 @@ OC.Upload = {
 				 * @returns {boolean}
 				 */
 				add: function(e, data) {
-					OC.Upload.log('add', e, data);
+					self.log('add', e, data);
 					var that = $(this), freeSpace;
+
+					var upload = new OC.FileUpload(self, data);
+					// can't link directly due to jQuery not liking cyclic deps on its ajax object
+					data.uploadId = upload.getId();
 
 					// we need to collect all data upload objects before
 					// starting the upload so we can check their existence
@@ -236,16 +794,17 @@ OC.Upload = {
 							totalBytes: 0
 						};
 					}
+					// TODO: move originalFiles to a separate container, maybe inside OC.Upload
 					var selection = data.originalFiles.selection;
 
 					// add uploads
 					if ( selection.uploads.length < selection.filesToUpload ) {
 						// remember upload
-						selection.uploads.push(data);
+						selection.uploads.push(upload);
 					}
 
 					//examine file
-					var file = data.files[0];
+					var file = upload.getFile();
 					try {
 						// FIXME: not so elegant... need to refactor that method to return a value
 						Files.isFileNameValid(file.name);
@@ -255,14 +814,24 @@ OC.Upload = {
 						data.errorThrown = errorMessage;
 					}
 
+					if (data.targetDir) {
+						upload.setTargetFolder(data.targetDir);
+						delete data.targetDir;
+					}
+
 					// in case folder drag and drop is not supported file will point to a directory
 					// http://stackoverflow.com/a/20448357
-					if ( ! file.type && file.size%4096 === 0 && file.size <= 102400) {
+					if ( ! file.type && file.size % 4096 === 0 && file.size <= 102400) {
+						var dirUploadFailure = false;
 						try {
 							var reader = new FileReader();
 							reader.readAsBinaryString(file);
 						} catch (NS_ERROR_FILE_ACCESS_DENIED) {
 							//file is a directory
+							dirUploadFailure = true;
+						}
+
+						if (dirUploadFailure) {
 							data.textStatus = 'dirorzero';
 							data.errorThrown = t('files',
 								'Unable to upload {filename} as it is a directory or has 0 bytes',
@@ -271,17 +840,12 @@ OC.Upload = {
 						}
 					}
 
-					// add size
-					selection.totalBytes += file.size;
-
-					// check PHP upload limit
-					if (selection.totalBytes > $('#upload_limit').val()) {
-						data.textStatus = 'sizeexceedlimit';
-						data.errorThrown = t('files',
-							'Total file size {size1} exceeds upload limit {size2}', {
-							'size1': humanFileSize(selection.totalBytes),
-							'size2': humanFileSize($('#upload_limit').val())
-						});
+					// only count if we're not overwriting an existing shared file
+					if (self._isReceivedSharedFile(file)) {
+						file.isReceivedShare = true;
+					} else {
+						// add size
+						selection.totalBytes += file.size;
 					}
 
 					// check free space
@@ -297,7 +861,7 @@ OC.Upload = {
 
 					// end upload for whole selection on error
 					if (data.errorThrown) {
-						// trigger fileupload fail
+						// trigger fileupload fail handler
 						var fu = that.data('blueimp-fileupload') || that.data('fileupload');
 						fu._trigger('fail', e, data);
 						return false; //don't upload anything
@@ -312,9 +876,7 @@ OC.Upload = {
 						var callbacks = {
 
 							onNoConflicts: function (selection) {
-								$.each(selection.uploads, function(i, upload) {
-									upload.submit();
-								});
+								self.submitUploads(selection.uploads);
 							},
 							onSkipConflicts: function (selection) {
 								//TODO mark conflicting files as toskip
@@ -332,7 +894,7 @@ OC.Upload = {
 							}
 						};
 
-						OC.Upload.checkExistingFiles(selection, callbacks);
+						self.checkExistingFiles(selection, callbacks);
 
 					}
 
@@ -343,47 +905,43 @@ OC.Upload = {
 				 * @param {object} e
 				 */
 				start: function(e) {
-					OC.Upload.log('start', e, null);
+					self.log('start', e, null);
 					//hide the tooltip otherwise it covers the progress bar
 					$('#upload').tipsy('hide');
 				},
-				submit: function(e, data) {
-					OC.Upload.rememberUpload(data);
-					if ( ! data.formData ) {
-						var fileDirectory = '';
-						if(typeof data.files[0].relativePath !== 'undefined') {
-							fileDirectory = data.files[0].relativePath;
-						}
-						// noone set update parameters, we set the minimum
-						data.formData = {
-							requesttoken: oc_requesttoken,
-							dir: data.targetDir || FileList.getCurrentDirectory(),
-							file_directory: fileDirectory
-						};
-					}
-				},
 				fail: function(e, data) {
-					OC.Upload.log('fail', e, data);
-					if (typeof data.textStatus !== 'undefined' && data.textStatus !== 'success' ) {
-						if (data.textStatus === 'abort') {
-							OC.Notification.show(t('files', 'Upload cancelled.'));
-						} else {
-							// HTTP connection problem
-							OC.Notification.show(data.errorThrown);
-							if (data.result) {
-								var result = JSON.parse(data.result);
-								if (result && result[0] && result[0].data && result[0].data.code === 'targetnotfound') {
-									// abort upload of next files if any
-									OC.Upload.cancelUploads();
-								}
-							}
-						}
-						//hide notification after 10 sec
-						setTimeout(function() {
-							OC.Notification.hide();
-						}, 10000);
+					var upload = self.getUpload(data);
+					var status = null;
+					if (upload) {
+						status = upload.getResponseStatus();
 					}
-					OC.Upload.deleteUpload(data);
+					self.log('fail', e, upload);
+
+					if (data.textStatus === 'abort') {
+						self.showUploadCancelMessage();
+					} else if (status === 412) {
+						// file already exists
+						self.showConflict(upload);
+					} else if (status === 404) {
+						// target folder does not exist any more
+						OC.Notification.showTemporary(
+							t('files', 'Target folder "{dir}" does not exist any more', {dir: upload.getFullPath()})
+						);
+						self.cancelUploads();
+					} else if (status === 507) {
+						// not enough space
+						OC.Notification.showTemporary(
+							t('files', 'Not enough free space')
+						);
+						self.cancelUploads();
+					} else {
+						// HTTP connection problem or other error
+						OC.Notification.showTemporary(data.errorThrown, {timeout: 10});
+					}
+
+					if (upload) {
+						upload.deleteUpload();
+					}
 				},
 				/**
 				 * called for every successful upload
@@ -391,39 +949,16 @@ OC.Upload = {
 				 * @param {object} data
 				 */
 				done:function(e, data) {
-					OC.Upload.log('done', e, data);
-					// handle different responses (json or body from iframe for ie)
-					var response;
-					if (typeof data.result === 'string') {
-						response = data.result;
-					} else {
-						//fetch response from iframe
-						response = data.result[0].body.innerText;
-					}
-					var result = $.parseJSON(response);
+					var upload = self.getUpload(data);
+					var that = $(this);
+					self.log('done', e, upload);
 
-					delete data.jqXHR;
-
-					var fu = $(this).data('blueimp-fileupload') || $(this).data('fileupload');
-
-					if (result.status === 'error' && result.data && result.data.message){
-						data.textStatus = 'servererror';
-						data.errorThrown = result.data.message;
+					var status = upload.getResponseStatus();
+					if (status < 200 || status >= 300) {
+						// trigger fail handler
+						var fu = that.data('blueimp-fileupload') || that.data('fileupload');
 						fu._trigger('fail', e, data);
-					} else if (typeof result[0] === 'undefined') {
-						data.textStatus = 'servererror';
-						data.errorThrown = t('files', 'Could not get result from server.');
-						fu._trigger('fail', e, data);
-					} else if (result[0].status === 'existserror') {
-						//show "file already exists" dialog
-						var original = result[0];
-						var replacement = data.files[0];
-						OC.dialogs.fileexists(data, original, replacement, OC.Upload, fu);
-					} else if (result[0].status !== 'success') {
-						//delete data.jqXHR;
-						data.textStatus = 'servererror';
-						data.errorThrown = result[0].data.message; // error message has been translated on server
-						fu._trigger('fail', e, data);
+						return;
 					}
 				},
 				/**
@@ -432,288 +967,170 @@ OC.Upload = {
 				 * @param {object} data
 				 */
 				stop: function(e, data) {
-					OC.Upload.log('stop', e, data);
+					self.log('stop', e, data);
 				}
 			};
 
 			// initialize jquery fileupload (blueimp)
-			var fileupload = $('#file_upload_start').fileupload(file_upload_param);
-			window.file_upload_param = fileupload;
+			var fileupload = this.$uploadEl.fileupload(this.fileUploadParam);
 
-			if (supportAjaxUploadWithProgress()) {
+			if (this._supportAjaxUploadWithProgress()) {
+				//remaining time
+				var lastUpdate = new Date().getMilliseconds();
+				var lastSize = 0;
+				var bufferSize = 20;
+				var buffer = [];
+				var bufferIndex = 0;
+				var bufferTotal = 0;
+				for(var i = 0; i < bufferSize;i++){
+					buffer[i] = 0;
+				}
 
 				// add progress handlers
 				fileupload.on('fileuploadadd', function(e, data) {
-					OC.Upload.log('progress handle fileuploadadd', e, data);
-					//show cancel button
-					//if (data.dataType !== 'iframe') { //FIXME when is iframe used? only for ie?
-					//	$('#uploadprogresswrapper input.stop').show();
-					//}
+					self.log('progress handle fileuploadadd', e, data);
+					self.trigger('add', e, data);
 				});
 				// add progress handlers
 				fileupload.on('fileuploadstart', function(e, data) {
-					OC.Upload.log('progress handle fileuploadstart', e, data);
-					$('#uploadprogresswrapper input.stop').show();
+					self.log('progress handle fileuploadstart', e, data);
+					$('#uploadprogresswrapper .stop').show();
+					$('#uploadprogresswrapper .label').show();
 					$('#uploadprogressbar').progressbar({value: 0});
-					OC.Upload._showProgressBar();
+					$('#uploadprogressbar .ui-progressbar-value').
+						html('<em class="label inner"><span class="desktop">'
+							+ t('files', 'Uploading...')
+							+ '</span><span class="mobile">'
+							+ t('files', '...')
+							+ '</span></em>');
+                    $('#uploadprogressbar').tipsy({gravity:'n', fade:true, live:true});
+					self._showProgressBar();
+					self.trigger('start', e, data);
 				});
 				fileupload.on('fileuploadprogress', function(e, data) {
-					OC.Upload.log('progress handle fileuploadprogress', e, data);
+					self.log('progress handle fileuploadprogress', e, data);
 					//TODO progressbar in row
+					self.trigger('progress', e, data);
 				});
 				fileupload.on('fileuploadprogressall', function(e, data) {
-					OC.Upload.log('progress handle fileuploadprogressall', e, data);
+					self.log('progress handle fileuploadprogressall', e, data);
 					var progress = (data.loaded / data.total) * 100;
+					var thisUpdate = new Date().getMilliseconds();
+					var diffUpdate = (thisUpdate - lastUpdate)/1000; // eg. 2s
+					lastUpdate = thisUpdate;
+					var diffSize = data.loaded - lastSize;
+					lastSize = data.loaded;
+					diffSize = diffSize / diffUpdate; // apply timing factor, eg. 1mb/2s = 0.5mb/s
+					var remainingSeconds = ((data.total - data.loaded) / diffSize);
+					if(remainingSeconds >= 0) {
+						bufferTotal = bufferTotal - (buffer[bufferIndex]) + remainingSeconds;
+						buffer[bufferIndex] = remainingSeconds; //buffer to make it smoother
+						bufferIndex = (bufferIndex + 1) % bufferSize;
+					}
+					var smoothRemainingSeconds = (bufferTotal / bufferSize); //seconds
+					var date = new Date(smoothRemainingSeconds * 1000);
+					var timeStringDesktop = "";
+					var timeStringMobile = "";
+					if(date.getUTCHours() > 0){
+						timeStringDesktop = t('files', '{hours}:{minutes}:{seconds} hour{plural_s} left' , {
+							hours:date.getUTCHours(),
+							minutes: ('0' + date.getUTCMinutes()).slice(-2),
+							seconds: ('0' + date.getUTCSeconds()).slice(-2),
+							plural_s: ( smoothRemainingSeconds === 3600  ? "": "s") // 1 hour = 1*60m*60s = 3600s
+						});
+						timeStringMobile = t('files', '{hours}:{minutes}h' , {
+							hours:date.getUTCHours(),
+							minutes: ('0' + date.getUTCMinutes()).slice(-2),
+							seconds: ('0' + date.getUTCSeconds()).slice(-2)
+						});
+					} else if(date.getUTCMinutes() > 0){
+						timeStringDesktop = t('files', '{minutes}:{seconds} minute{plural_s} left' , {
+							minutes: date.getUTCMinutes(),
+							seconds: ('0' + date.getUTCSeconds()).slice(-2),
+							plural_s: (smoothRemainingSeconds === 60 ? "": "s") // 1 minute = 1*60s = 60s
+						});
+						timeStringMobile = t('files', '{minutes}:{seconds}m' , {
+							minutes: date.getUTCMinutes(),
+							seconds: ('0' + date.getUTCSeconds()).slice(-2)
+						});
+					} else if(date.getUTCSeconds() > 0){
+						timeStringDesktop = t('files', '{seconds} second{plural_s} left' , {
+							seconds: date.getUTCSeconds(),
+							plural_s: (smoothRemainingSeconds === 1 ? "": "s") // 1 second = 1s = 1s
+						});
+						timeStringMobile = t('files', '{seconds}s' , {seconds: date.getUTCSeconds()});
+					} else {
+						timeStringDesktop = t('files', 'Any moment now...');
+						timeStringMobile = t('files', 'Soon...');
+					}
+					$('#uploadprogressbar .label .mobile').text(timeStringMobile);
+					$('#uploadprogressbar .label .desktop').text(timeStringDesktop);
+					$('#uploadprogressbar').attr('original-title',
+						t('files', '{loadedSize} of {totalSize} ({bitrate})' , {
+							loadedSize: humanFileSize(data.loaded),
+							totalSize: humanFileSize(data.total),
+							bitrate: humanFileSize(data.bitrate) + '/s'
+						})
+					);
 					$('#uploadprogressbar').progressbar('value', progress);
+					self.trigger('progressall', e, data);
 				});
 				fileupload.on('fileuploadstop', function(e, data) {
-					OC.Upload.log('progress handle fileuploadstop', e, data);
+					self.log('progress handle fileuploadstop', e, data);
 
-					OC.Upload._hideProgressBar();
+					self.clear();
+					self._hideProgressBar();
+					self.trigger('stop', e, data);
 				});
 				fileupload.on('fileuploadfail', function(e, data) {
-					OC.Upload.log('progress handle fileuploadfail', e, data);
+					self.log('progress handle fileuploadfail', e, data);
 					//if user pressed cancel hide upload progress bar and cancel button
 					if (data.errorThrown === 'abort') {
-						OC.Upload._hideProgressBar();
+						self._hideProgressBar();
 					}
+					self.trigger('fail', e, data);
+				});
+
+				fileupload.on('fileuploadchunksend', function(e, data) {
+					// modify the request to adjust it to our own chunking
+					var upload = self.getUpload(data);
+					var range = data.contentRange.split(' ')[1];
+					var chunkId = range.split('/')[0];
+					data.url = OC.getRootPath() +
+						'/remote.php/dav/uploads' +
+						'/' + encodeURIComponent(OC.getCurrentUser().uid) +
+						'/' + encodeURIComponent(upload.getId()) +
+						'/' + encodeURIComponent(chunkId);
+					delete data.contentRange;
+					delete data.headers['Content-Range'];
+				});
+				fileupload.on('fileuploaddone', function(e, data) {
+					var upload = self.getUpload(data);
+					upload.done().then(function() {
+						self.trigger('done', e, upload);
+					});
+				});
+				fileupload.on('fileuploaddrop', function(e, data) {
+					self.trigger('drop', e, data);
 				});
 
 			}
 		}
 
-		$.assocArraySize = function(obj) {
-			// http://stackoverflow.com/a/6700/11236
-			var size = 0, key;
-			for (key in obj) {
-				if (obj.hasOwnProperty(key)) {
-					size++;
-				}
-			}
-			return size;
-		};
-
 		// warn user not to leave the page while upload is in progress
 		$(window).on('beforeunload', function(e) {
-			if (OC.Upload.isProcessing()) {
+			if (self.isProcessing()) {
 				return t('files', 'File upload is in progress. Leaving the page now will cancel the upload.');
 			}
 		});
 
 		//add multiply file upload attribute to all browsers except konqueror (which crashes when it's used)
 		if (navigator.userAgent.search(/konqueror/i) === -1) {
-			$('#file_upload_start').attr('multiple', 'multiple');
+			this.$uploadEl.attr('multiple', 'multiple');
 		}
 
-		$(document).click(function(ev) {
-			// do not close when clicking in the dropdown
-			if ($(ev.target).closest('#new').length){
-				return;
-			}
-			$('#new>ul').hide();
-			$('#new').removeClass('active');
-			if ($('#new .error').length > 0) {
-				$('#new .error').tipsy('hide');
-			}
-			$('#new li').each(function(i,element) {
-				if ($(element).children('p').length === 0) {
-					$(element).children('form').remove();
-					$(element).append('<p>' + $(element).data('text') + '</p>');
-				}
-			});
-		});
-		$('#new').click(function(event) {
-			event.stopPropagation();
-		});
-		$('#new>a').click(function() {
-			$('#new>ul').toggle();
-			$('#new').toggleClass('active');
-		});
-		$('#new li').click(function() {
-			if ($(this).children('p').length === 0) {
-				return;
-			}
-
-			$('#new .error').tipsy('hide');
-
-			$('#new li').each(function(i, element) {
-				if ($(element).children('p').length === 0) {
-					$(element).children('form').remove();
-					$(element).append('<p>' + $(element).data('text') + '</p>');
-				}
-			});
-
-			var type = $(this).data('type');
-			var text = $(this).children('p').text();
-			$(this).data('text', text);
-			$(this).children('p').remove();
-
-			// add input field
-			var form = $('<form></form>');
-			var input = $('<input type="text">');
-			var newName = $(this).attr('data-newname') || '';
-			if (newName) {
-				input.val(newName);
-			}
-			form.append(input);
-			$(this).append(form);
-			var lastPos;
-			var checkInput = function () {
-				var filename = input.val();
-				if (type === 'web' && filename.length === 0) {
-					throw t('files', 'URL cannot be empty');
-				} else if (type !== 'web' && ! Files.isFileNameValid(filename)) {
-					// Files.isFileNameValid(filename) throws an exception itself
-				} else if (FileList.inList(filename)) {
-					throw t('files', '{new_name} already exists', {new_name: filename});
-				} else {
-					return true;
-				}
-			};
-
-			// verify filename on typing
-			input.keyup(function(event) {
-				try {
-					checkInput();
-					input.tipsy('hide');
-					input.removeClass('error');
-				} catch (error) {
-					input.attr('title', error);
-					input.tipsy({gravity: 'w', trigger: 'manual'});
-					input.tipsy('show');
-					input.addClass('error');
-				}
-			});
-
-			input.focus();
-			// pre select name up to the extension
-			lastPos = newName.lastIndexOf('.');
-			if (lastPos === -1) {
-				lastPos = newName.length;
-			}
-			input.selectRange(0, lastPos);
-			form.submit(function(event) {
-				event.stopPropagation();
-				event.preventDefault();
-				try {
-					checkInput();
-					var newname = input.val();
-					if (FileList.lastAction) {
-						FileList.lastAction();
-					}
-					var name = FileList.getUniqueName(newname);
-					if (newname !== name) {
-						FileList.checkName(name, newname, true);
-						var hidden = true;
-					} else {
-						var hidden = false;
-					}
-					switch(type) {
-						case 'file':
-							$.post(
-								OC.filePath('files', 'ajax', 'newfile.php'),
-								{
-									dir: FileList.getCurrentDirectory(),
-									filename: name
-								},
-								function(result) {
-									if (result.status === 'success') {
-										FileList.add(result.data, {hidden: hidden, animate: true});
-									} else {
-										OC.dialogs.alert(result.data.message, t('core', 'Could not create file'));
-									}
-								}
-							);
-							break;
-						case 'folder':
-							$.post(
-								OC.filePath('files','ajax','newfolder.php'),
-								{
-									dir: FileList.getCurrentDirectory(),
-									foldername: name
-								},
-								function(result) {
-									if (result.status === 'success') {
-										FileList.add(result.data, {hidden: hidden, animate: true});
-									} else {
-										OC.dialogs.alert(result.data.message, t('core', 'Could not create folder'));
-									}
-								}
-							);
-							break;
-						case 'web':
-							if (name.substr(0, 8) !== 'https://' && name.substr(0, 7) !== 'http://') {
-								name = 'http://' + name;
-							}
-							var localName = name;
-							if (localName.substr(localName.length-1, 1) === '/') {//strip /
-								localName = localName.substr(0, localName.length-1);
-							}
-							if (localName.indexOf('/')) { //use last part of url
-								localName = localName.split('/').pop();
-							} else { //or the domain
-								localName = (localName.match(/:\/\/(.[^\/]+)/)[1]).replace('www.', '');
-							}
-							localName = FileList.getUniqueName(localName);
-							//IE < 10 does not fire the necessary events for the progress bar.
-							if ($('html.lte9').length === 0) {
-								$('#uploadprogressbar').progressbar({value: 0});
-								OC.Upload._showProgressBar();
-							}
-
-							var eventSource = new OC.EventSource(
-								OC.filePath('files', 'ajax', 'newfile.php'),
-								{
-									dir: FileList.getCurrentDirectory(),
-									source: name,
-									filename: localName
-								}
-							);
-							eventSource.listen('progress', function(progress) {
-								//IE < 10 does not fire the necessary events for the progress bar.
-								if ($('html.lte9').length === 0) {
-									$('#uploadprogressbar').progressbar('value',progress);
-								}
-							});
-							eventSource.listen('success', function(data) {
-								var file = data;
-								OC.Upload._hideProgressBar();
-
-								FileList.add(file, {hidden: hidden, animate: true});
-							});
-							eventSource.listen('error', function(error) {
-								OC.Upload._hideProgressBar();
-								var message = (error && error.message) || t('core', 'Error fetching URL');
-								OC.Notification.show(message);
-								//hide notification after 10 sec
-								setTimeout(function() {
-									OC.Notification.hide();
-								}, 10000);
-							});
-							break;
-					}
-					var li = form.parent();
-					form.remove();
-					/* workaround for IE 9&10 click event trap, 2 lines: */
-					$('input').first().focus();
-					$('#content').focus();
-					li.append('<p>' + li.data('text') + '</p>');
-					$('#new>a').click();
-				} catch (error) {
-					input.attr('title', error);
-					input.tipsy({gravity: 'w', trigger: 'manual'});
-					input.tipsy('show');
-					input.addClass('error');
-				}
-			});
-		});
-		window.file_upload_param = file_upload_param;
-		return file_upload_param;
+		return this.fileUploadParam;
 	}
-};
-
-$(document).ready(function() {
-	OC.Upload.init();
-});
+}, OC.Backbone.Events);
 
 

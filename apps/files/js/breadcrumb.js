@@ -19,10 +19,17 @@
 *
 */
 
-/* global OC */
 (function() {
 	/**
-	 * Creates an breadcrumb element in the given container
+	 * @class BreadCrumb
+	 * @memberof OCA.Files
+	 * @classdesc Breadcrumbs that represent the current path.
+	 *
+	 * @param {Object} [options] options
+	 * @param {Function} [options.onClick] click event handler
+	 * @param {Function} [options.onDrop] drop event handler
+	 * @param {Function} [options.getCrumbUrl] callback that returns
+	 * the URL of a given breadcrumb
 	 */
 	var BreadCrumb = function(options){
 		this.$el = $('<div class="breadcrumb"></div>');
@@ -32,22 +39,31 @@
 		}
 		if (options.onDrop) {
 			this.onDrop = options.onDrop;
+			this.onOver = options.onOver;
+			this.onOut = options.onOut;
 		}
 		if (options.getCrumbUrl) {
 			this.getCrumbUrl = options.getCrumbUrl;
 		}
 	};
+	/**
+	 * @memberof OCA.Files
+	 */
 	BreadCrumb.prototype = {
 		$el: null,
 		dir: null,
 
 		/**
 		 * Total width of all breadcrumbs
+		 * @type int
+		 * @private
 		 */
 		totalWidth: 0,
 		breadcrumbs: [],
 		onClick: null,
 		onDrop: null,
+		onOver: null,
+		onOut: null,
 
 		/**
 		 * Sets the directory to be displayed as breadcrumb.
@@ -55,6 +71,7 @@
 		 * @param dir path to be displayed as breadcrumb
 		 */
 		setDirectory: function(dir) {
+			dir = dir.replace(/\\/g, '/');
 			dir = dir || '/';
 			if (dir !== this.dir) {
 				this.dir = dir;
@@ -64,8 +81,9 @@
 
 		/**
 		 * Returns the full URL to the given directory
-		 * @param part crumb data as map
-		 * @param index crumb index
+		 *
+		 * @param {Object.<String, String>} part crumb data as map
+		 * @param {int} index crumb index
 		 * @return full URL
 		 */
 		getCrumbUrl: function(part, index) {
@@ -93,6 +111,7 @@
 				if (part.img) {
 					$image = $('<img class="svg"></img>');
 					$image.attr('src', part.img);
+					$image.attr('alt', part.alt);
 					$link.append($image);
 				}
 				this.breadcrumbs.push($crumb);
@@ -112,7 +131,10 @@
 			if (this.onDrop) {
 				this.$el.find('.crumb:not(.last)').droppable({
 					drop: this.onDrop,
-					tolerance: 'pointer'
+					over: this.onOver,
+					out: this.onOut,
+					tolerance: 'pointer',
+					hoverClass: 'canDrop'
 				});
 			}
 
@@ -121,8 +143,9 @@
 
 		/**
 		 * Makes a breadcrumb structure based on the given path
-		 * @param dir path to split into a breadcrumb structure
-		 * @return array of map {dir: path, name: displayName}
+		 *
+		 * @param {String} dir path to split into a breadcrumb structure
+		 * @return {Object.<String, String>} map of {dir: path, name: displayName}
 		 */
 		_makeCrumbs: function(dir) {
 			var crumbs = [];
@@ -137,6 +160,7 @@
 			crumbs.push({
 				dir: '/',
 				name: '',
+				alt: t('files', 'Home'),
 				img: OC.imagePath('core', 'places/home.svg')
 			});
 			for (var i = 0; i < parts.length; i++) {
@@ -166,6 +190,8 @@
 
 		/**
 		 * Show/hide breadcrumbs to fit the given width
+		 * 
+		 * @param {int} availableWidth available width
 		 */
 		setMaxWidth: function (availableWidth) {
 			if (this.availableWidth !== availableWidth) {
@@ -224,6 +250,8 @@
 						this.$el.find('.crumb.ellipsized')
 							.attr('title', $crumb.attr('data-dir'))
 							.tipsy();
+						this.$el.find('.ellipsis')
+							.wrap('<a class="ellipsislink" href="' + encodeURI(OC.generateUrl('apps/files/?dir=' + $crumb.attr('data-dir'))) + '"></a>');
 					}
 					// and all the previous ones (going backwards)
 					firstHidden = false;
