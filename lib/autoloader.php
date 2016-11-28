@@ -153,7 +153,7 @@ class Autoloader {
 			// No cache or cache miss
 			$pathsToRequire = [];
 			foreach ($this->findClass($class) as $path) {
-				$fullPath = stream_resolve_include_path($path);
+				$fullPath = $path;// stream_resolve_include_path($path);
 				if ($fullPath && $this->isValidPath($fullPath)) {
 					$pathsToRequire[] = $fullPath;
 				}

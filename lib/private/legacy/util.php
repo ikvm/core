@@ -909,10 +909,10 @@ class OC_Util {
 			clearstatcache();
 			$perms = substr(decoct(@fileperms($dataDirectory)), -3);
 			if (substr($perms, 2, 1) != '0') {
-				$errors[] = [
-					'error' => $l->t('Your Data directory is readable by other users'),
-					'hint' => $permissionsModHint
-				];
+                //$errors[] = [
+                //    'error' => $l->t('Your Data directory is readable by other users'),
+                //    'hint' => $permissionsModHint
+                //];
 			}
 		}
 		return $errors;
@@ -928,12 +928,12 @@ class OC_Util {
 	public static function checkDataDirectoryValidity($dataDirectory) {
 		$l = \OC::$server->getL10N('lib');
 		$errors = [];
-		if ($dataDirectory[0] !== '/') {
-			$errors[] = [
-				'error' => $l->t('Your Data directory must be an absolute path'),
-				'hint' => $l->t('Check the value of "datadirectory" in your configuration')
-			];
-		}
+        //if ($dataDirectory[0] !== '/') {
+        //    $errors[] = [
+        //        'error' => $l->t('Your Data directory must be an absolute path'),
+        //        'hint' => $l->t('Check the value of "datadirectory" in your configuration')
+        //    ];
+        //}
 		if (!file_exists($dataDirectory . '/.ocdata')) {
 			$errors[] = [
 				'error' => $l->t('Your Data directory  is invalid'),
