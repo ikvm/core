@@ -57,10 +57,10 @@ class Local extends \OC\Files\Storage\Common {
 		if ($this->datadir === '/') {
 			$this->realDataDir = $this->datadir;
 		} else {
-			$this->realDataDir = rtrim(realpath($this->datadir), '/') . '/';
+			$this->realDataDir = rtrim(realpath($this->datadir), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
 		}
-		if (substr($this->datadir, -1) !== '/') {
-			$this->datadir .= '/';
+		if (substr($this->datadir, -strlen(DIRECTORY_SEPARATOR)) !== DIRECTORY_SEPARATOR) {
+			$this->datadir .= DIRECTORY_SEPARATOR;
 		}
 		$this->dataDirLength = strlen($this->realDataDir);
 	}
@@ -117,8 +117,8 @@ class Local extends \OC\Files\Storage\Common {
 	}
 
 	public function is_dir($path) {
-		if (substr($path, -1) == '/') {
-			$path = substr($path, 0, -1);
+		if (substr($path, -strlen(DIRECTORY_SEPARATOR)) == DIRECTORY_SEPARATOR) {
+			$path = substr($path, 0, -strlen(DIRECTORY_SEPARATOR));
 		}
 		return is_dir($this->getSourcePath($path));
 	}
@@ -328,13 +328,13 @@ class Local extends \OC\Files\Storage\Common {
 		foreach (scandir($physicalDir) as $item) {
 			if (\OC\Files\Filesystem::isIgnoredDir($item))
 				continue;
-			$physicalItem = $physicalDir . '/' . $item;
+			$physicalItem = $physicalDir . DIRECTORY_SEPARATOR . $item;
 
 			if (strstr(strtolower($item), strtolower($query)) !== false) {
-				$files[] = $dir . '/' . $item;
+				$files[] = $dir . DIRECTORY_SEPARATOR . $item;
 			}
 			if (is_dir($physicalItem)) {
-				$files = array_merge($files, $this->searchInDir($query, $dir . '/' . $item));
+				$files = array_merge($files, $this->searchInDir($query, $dir . DIRECTORY_SEPARATOR . $item));
 			}
 		}
 		return $files;
@@ -374,7 +374,7 @@ class Local extends \OC\Files\Storage\Common {
 			$realPath = realpath($pathToResolve);
 		}
 		if ($realPath) {
-			$realPath = $realPath . '/';
+			$realPath = $realPath . DIRECTORY_SEPARATOR;
 		}
 		if (substr($realPath, 0, $this->dataDirLength) === $this->realDataDir) {
 			return $fullPath;

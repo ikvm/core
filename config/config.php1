@@ -1,0 +1,21 @@
+<?php
+$CONFIG = array (
+  'instanceid' => 'ocxjjuhlg7ae',
+  'passwordsalt' => 'Y+yRliTFixPTVBaS8HnVpLaaxCo5Iq',
+  'secret' => 'KjJ+NjZQ4Tr9uojyaAH0jGDZn3GJL4tZlnmP0ino7cvF51LN',
+  'trusted_domains' => 
+  array (
+    0 => 'localhost:57005',
+  ),
+  'datadirectory' => 'D:/projects/gits/Bipepper/ownCloud/data',
+  'overwrite.cli.url' => 'http://localhost:57005',
+  'dbtype' => 'mysql',
+  'version' => '9.2.0.3',
+  'dbname' => 'own',
+  'dbhost' => 'localhost',
+  'dbtableprefix' => 'oc_',
+  'dbuser' => 'oc_admin',
+  'dbpassword' => 'vh80NeG1E/oqAD0NddW+OMqRCssdjZ',
+  'logtimezone' => 'UTC',
+  'installed' => true,
+);
